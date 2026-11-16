@@ -52,6 +52,10 @@
   #edBox{background:#fff;border-radius:12px;padding:18px;width:min(94vw,420px)}
   #edBox input{display:block;width:100%;box-sizing:border-box;margin:4px 0 10px}
   #edBox label{font-size:13px;color:#555}
+  .vf{position:relative;aspect-ratio:210/242;width:min(100%,320px);margin:0 auto;overflow:hidden;border-radius:8px;background:#000}
+  #camBox .vf video,#camBox .vf img{position:absolute;inset:0;width:100%;height:100%;max-height:none;object-fit:cover;border-radius:0}
+  #camBox .vf img{object-fit:contain}
+  #guia{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 </style>
 </head>
 <body>
@@ -113,12 +117,17 @@
     <h3 id="camNome" style="margin:0 0 4px"></h3>
     <small id="camSub" style="color:#666"></small>
     <div id="camStatus"></div>
-    <div style="margin:10px 0">
+    <div class="vf" style="margin-top:10px;margin-bottom:10px">
       <video id="camVideo" class="espelho" autoplay playsinline muted></video>
       <img id="camPrev" style="display:none">
+      <svg id="guia" viewBox="0 0 210 242" preserveAspectRatio="none">
+        <ellipse cx="105" cy="100" rx="60" ry="78" fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="2" stroke-dasharray="6 5"/>
+        <path d="M8 242 Q28 192 105 186 Q182 192 202 242" fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="2" stroke-dasharray="6 5"/>
+      </svg>
     </div>
     <p id="camMsg"></p>
     <div id="btnsLive">
+      <div style="font-size:13px;color:#555;margin-bottom:6px">Posicione o rosto dentro do contorno e os ombros na curva de baixo.</div>
       <label style="font-size:14px;display:block;margin-bottom:6px"><input type="checkbox" id="espelhar" checked onchange="aplicarEspelho()"> Espelhar foto</label>
       <button onclick="capturar()">📷 Tirar foto</button>
       <button class="sec" onclick="trocarCamera()">🔄 Virar câmera</button>
@@ -245,6 +254,7 @@ function modo(m) { // 'live' | 'prev' | 'view'
   $('btnsLive').style.display = m === 'live' ? 'block' : 'none';
   $('btnsPrev').style.display = m === 'prev' ? 'block' : 'none';
   $('btnsView').style.display = m === 'view' ? 'block' : 'none';
+  $('guia').style.display = m === 'live' ? 'block' : 'none';
 }
 function aplicarEspelho() { $('camVideo').classList.toggle('espelho', $('espelhar').checked); }
 
@@ -291,13 +301,20 @@ function refazer() {
   modo('live');
   iniciarStream();
 }
-function reduzir(fonte, w, h, espelhar, cb) {
-  const max = 1024, k = Math.min(1, max / Math.max(w, h));
-  const c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+// Tamanho final da foto (igual ao padrão do crachá). Para mais resolução, dobre: 420 x 484.
+const FOTO_W = 210, FOTO_H = 242;
+function reduzir(fonte, w, h, espelhar, cb, topo) {
+  const razao = FOTO_W / FOTO_H;
+  let sw = w, sh = h;                                   // recorte centralizado na proporção da foto
+  if (w / h > razao) sw = h * razao; else sh = w / razao;
+  const sx = (w - sw) / 2;
+  const sy = (h - sh) * (topo ? 0.2 : 0.5);              // arquivos: foca mais na parte de cima (rosto)
+  const c = document.createElement('canvas'); c.width = FOTO_W; c.height = FOTO_H;
   const ctx = c.getContext('2d');
-  if (espelhar) { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
-  ctx.drawImage(fonte, 0, 0, c.width, c.height);
-  c.toBlob(cb, 'image/jpeg', 0.85);
+  ctx.imageSmoothingQuality = 'high';
+  if (espelhar) { ctx.translate(FOTO_W, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(fonte, sx, sy, sw, sh, 0, 0, FOTO_W, FOTO_H);
+  c.toBlob(cb, 'image/jpeg', 0.92);
 }
 function capturar() {
   const v = $('camVideo');
@@ -308,7 +325,7 @@ function arquivoEscolhido(inp) {
   const f = inp.files[0]; inp.value = '';
   if (!f) return;
   const img = new Image();
-  img.onload = () => reduzir(img, img.naturalWidth, img.naturalHeight, false, mostrarPrev); // arquivo: sem espelhar
+  img.onload = () => reduzir(img, img.naturalWidth, img.naturalHeight, false, mostrarPrev, true); // arquivo: sem espelhar
   img.src = URL.createObjectURL(f);
 }
 async function salvarFoto() {
