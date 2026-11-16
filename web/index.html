@@ -38,6 +38,14 @@
   #camBox{background:#fff;border-radius:12px;padding:16px;width:min(94vw,520px);text-align:center}
   #camBox video,#camBox img{width:100%;max-height:60vh;border-radius:8px;background:#000;object-fit:contain}
   #camMsg{color:#c00;min-height:1.2em;font-size:14px}
+  #camVideo.espelho{transform:scaleX(-1)}
+  .badge{font-size:12px;padding:3px 8px;border-radius:12px;white-space:nowrap;font-weight:bold}
+  .badge.ok{background:#e3f6e8;color:#1a7a32}
+  .badge.no{background:#fff1dc;color:#a15c00}
+  #camStatus{font-weight:bold;margin:4px 0}
+  #camStatus.ok{color:#1a7a32} #camStatus.no{color:#a15c00}
+  button.del{background:#c62828}
+  #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:10px 18px;border-radius:8px;display:none;z-index:20}
 </style>
 </head>
 <body>
@@ -98,24 +106,31 @@
   <div id="camBox">
     <h3 id="camNome" style="margin:0 0 4px"></h3>
     <small id="camSub" style="color:#666"></small>
+    <div id="camStatus"></div>
     <div style="margin:10px 0">
-      <video id="camVideo" autoplay playsinline muted></video>
+      <video id="camVideo" class="espelho" autoplay playsinline muted></video>
       <img id="camPrev" style="display:none">
     </div>
     <p id="camMsg"></p>
     <div id="btnsLive">
+      <label style="font-size:14px;display:block;margin-bottom:6px"><input type="checkbox" id="espelhar" checked onchange="aplicarEspelho()"> Espelhar foto</label>
       <button onclick="capturar()">📷 Tirar foto</button>
       <button class="sec" onclick="trocarCamera()">🔄 Virar câmera</button>
       <button class="sec" onclick="$('arqFoto').click()">🖼️ Arquivo</button>
     </div>
     <div id="btnsPrev" style="display:none">
       <button onclick="salvarFoto()">✅ Salvar</button>
-      <button class="sec" onclick="refazer()">↩️ Refazer</button>
+      <button class="sec" onclick="refazer()">↩️ Descartar e refazer</button>
+    </div>
+    <div id="btnsView" style="display:none">
+      <button onclick="refazer()">📷 Tirar nova foto</button>
+      <button class="del" onclick="apagarFoto()">🗑️ Apagar foto</button>
     </div>
     <div><button class="sec" onclick="fecharCam()">Fechar</button></div>
     <input type="file" id="arqFoto" accept="image/*" capture="environment" style="display:none" onchange="arquivoEscolhido(this)">
   </div>
 </div>
+<div id="toast"></div>
 
 <div id="modal" onclick="this.style.display='none'"><img id="modalImg"></div>
 
@@ -176,6 +191,7 @@ function renderTabela() {
   $('tb').innerHTML = vis.map(p => `<div class="pessoa" onclick="abrirCam('${p.id}')">
       <div class="av ${p.foto_path?'tem':''}" data-id="${p.id}" style="background-color:${corDe(p.nome)}">${p.foto_path?'':esc(iniciais(p.nome))}</div>
       <div class="info"><b>${esc(p.nome)}</b><small>Mat. ${esc(p.matricula)}${p.local_trabalho?' · '+esc(p.local_trabalho):''}</small></div>
+      <span class="badge ${p.foto_path?'ok':'no'}">${p.foto_path?'✅ Foto cadastrada':'⚠️ Sem foto'}</span>
       <span class="cam">📷</span></div>`).join('')
     + (lista.length>200?`<p style="text-align:center;color:#666">Mostrando 200 de ${lista.length}. Use a busca para filtrar.</p>`:'');
   carregarMiniaturas(vis);
@@ -196,7 +212,19 @@ async function carregarMiniaturas(vis) {
 }
 
 // ===== Câmera =====
-let pessoaAtual = null, stream = null, facing = 'environment', blobFoto = null;
+let pessoaAtual = null, stream = null, facing = 'user', blobFoto = null;
+
+function toast(t) { const e = $('toast'); e.textContent = t; e.style.display = 'block'; setTimeout(() => e.style.display = 'none', 2800); }
+function fmtData(iso) { return iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''; }
+function setStatus(t, ok) { const e = $('camStatus'); e.textContent = t; e.className = ok ? 'ok' : 'no'; }
+function modo(m) { // 'live' | 'prev' | 'view'
+  $('camVideo').style.display = m === 'live' ? 'block' : 'none';
+  $('camPrev').style.display = m === 'live' ? 'none' : 'block';
+  $('btnsLive').style.display = m === 'live' ? 'block' : 'none';
+  $('btnsPrev').style.display = m === 'prev' ? 'block' : 'none';
+  $('btnsView').style.display = m === 'view' ? 'block' : 'none';
+}
+function aplicarEspelho() { $('camVideo').classList.toggle('espelho', $('espelhar').checked); }
 
 async function abrirCam(id) {
   pessoaAtual = pessoas.find(p => p.id === id);
@@ -204,7 +232,16 @@ async function abrirCam(id) {
   $('camSub').textContent = 'Mat. ' + pessoaAtual.matricula + (pessoaAtual.local_trabalho ? ' · ' + pessoaAtual.local_trabalho : '');
   $('camMsg').textContent = '';
   $('camModal').style.display = 'flex';
-  refazer();
+  if (pessoaAtual.foto_path) {
+    setStatus('✅ Foto cadastrada' + (pessoaAtual.foto_em ? ' em ' + fmtData(pessoaAtual.foto_em) : ''), true);
+    pararStream(); modo('view');
+    $('camPrev').removeAttribute('src');
+    const { data, error } = await sb.storage.from('fotos').download(pessoaAtual.foto_path);
+    if (error) $('camMsg').textContent = 'Não foi possível carregar a foto: ' + error.message;
+    else $('camPrev').src = URL.createObjectURL(data);
+  } else {
+    refazer();
+  }
 }
 async function iniciarStream() {
   pararStream();
@@ -222,31 +259,34 @@ function mostrarPrev(blob) {
   blobFoto = blob;
   pararStream();
   $('camPrev').src = URL.createObjectURL(blob);
-  $('camPrev').style.display = 'block'; $('camVideo').style.display = 'none';
-  $('btnsLive').style.display = 'none'; $('btnsPrev').style.display = 'block';
+  setStatus('🆕 Foto tirada, ainda NÃO salva. Clique em Salvar para cadastrar.', false);
+  modo('prev');
 }
 function refazer() {
   blobFoto = null; $('camMsg').textContent = '';
-  $('camPrev').style.display = 'none'; $('camVideo').style.display = 'block';
-  $('btnsLive').style.display = 'block'; $('btnsPrev').style.display = 'none';
+  setStatus(pessoaAtual && pessoaAtual.foto_path ? '🔄 Tirando nova foto (vai substituir a atual)' : '⚠️ Sem foto cadastrada', false);
+  aplicarEspelho();
+  modo('live');
   iniciarStream();
 }
-function reduzir(fonte, w, h, cb) {
+function reduzir(fonte, w, h, espelhar, cb) {
   const max = 1024, k = Math.min(1, max / Math.max(w, h));
   const c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
-  c.getContext('2d').drawImage(fonte, 0, 0, c.width, c.height);
+  const ctx = c.getContext('2d');
+  if (espelhar) { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(fonte, 0, 0, c.width, c.height);
   c.toBlob(cb, 'image/jpeg', 0.85);
 }
 function capturar() {
   const v = $('camVideo');
   if (!v.videoWidth) { $('camMsg').textContent = 'Câmera ainda não está pronta.'; return; }
-  reduzir(v, v.videoWidth, v.videoHeight, mostrarPrev);
+  reduzir(v, v.videoWidth, v.videoHeight, $('espelhar').checked, mostrarPrev);
 }
 function arquivoEscolhido(inp) {
   const f = inp.files[0]; inp.value = '';
   if (!f) return;
   const img = new Image();
-  img.onload = () => reduzir(img, img.naturalWidth, img.naturalHeight, mostrarPrev);
+  img.onload = () => reduzir(img, img.naturalWidth, img.naturalHeight, false, mostrarPrev); // arquivo: sem espelhar
   img.src = URL.createObjectURL(f);
 }
 async function salvarFoto() {
@@ -258,9 +298,25 @@ async function salvarFoto() {
   const agora = new Date().toISOString();
   const { error } = await sb.from('pessoas').update({ foto_path: path, foto_em: agora }).eq('id', pessoaAtual.id);
   if (error) { $('camMsg').textContent = 'Erro: ' + error.message; return; }
+  const nome = pessoaAtual.nome;
   pessoaAtual.foto_path = path; pessoaAtual.foto_em = agora;
   fecharCam();
   renderTabela();
+  toast('✅ Foto de ' + nome + ' cadastrada com sucesso');
+}
+async function apagarFoto() {
+  if (!pessoaAtual || !pessoaAtual.foto_path) return;
+  if (!confirm('Apagar a foto de ' + pessoaAtual.nome + '? Essa ação não pode ser desfeita.')) return;
+  $('camMsg').textContent = 'Apagando...';
+  const rm = await sb.storage.from('fotos').remove([pessoaAtual.foto_path]);
+  if (rm.error) { $('camMsg').textContent = 'Erro: ' + rm.error.message; return; }
+  const { error } = await sb.from('pessoas').update({ foto_path: null, foto_em: null }).eq('id', pessoaAtual.id);
+  if (error) { $('camMsg').textContent = 'Erro: ' + error.message; return; }
+  const nome = pessoaAtual.nome;
+  pessoaAtual.foto_path = null; pessoaAtual.foto_em = null;
+  fecharCam();
+  renderTabela();
+  toast('🗑️ Foto de ' + nome + ' apagada');
 }
 
 async function verFoto(path) {
