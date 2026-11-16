@@ -46,6 +46,12 @@
   #camStatus.ok{color:#1a7a32} #camStatus.no{color:#a15c00}
   button.del{background:#c62828}
   #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:10px 18px;border-radius:8px;display:none;z-index:20}
+  .acoes button{background:none;color:#222;padding:4px 6px;font-size:18px;margin:0}
+  .acoes button:hover{background:#e3e8ef}
+  #edModal{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:10}
+  #edBox{background:#fff;border-radius:12px;padding:18px;width:min(94vw,420px)}
+  #edBox input{display:block;width:100%;box-sizing:border-box;margin:4px 0 10px}
+  #edBox label{font-size:13px;color:#555}
 </style>
 </head>
 <body>
@@ -130,6 +136,18 @@
     <input type="file" id="arqFoto" accept="image/*" capture="environment" style="display:none" onchange="arquivoEscolhido(this)">
   </div>
 </div>
+<div id="edModal">
+  <div id="edBox">
+    <h3 style="margin-top:0">Editar pessoa</h3>
+    <label>Matrícula</label><input id="eMat">
+    <label>Nome</label><input id="eNome">
+    <label>Local de trabalho</label><input id="eLocal" list="listaLocais">
+    <p id="eMsg" style="color:#c00;min-height:1.2em;font-size:14px"></p>
+    <button onclick="salvarEdicao()">Salvar</button>
+    <button class="sec" onclick="$('edModal').style.display='none'">Cancelar</button>
+    <button class="del" style="float:right" onclick="excluirPessoa(editando.id)">🗑️ Excluir pessoa</button>
+  </div>
+</div>
 <div id="toast"></div>
 
 <div id="modal" onclick="this.style.display='none'"><img id="modalImg"></div>
@@ -192,6 +210,10 @@ function renderTabela() {
       <div class="av ${p.foto_path?'tem':''}" data-id="${p.id}" style="background-color:${corDe(p.nome)}">${p.foto_path?'':esc(iniciais(p.nome))}</div>
       <div class="info"><b>${esc(p.nome)}</b><small>Mat. ${esc(p.matricula)}${p.local_trabalho?' · '+esc(p.local_trabalho):''}</small></div>
       <span class="badge ${p.foto_path?'ok':'no'}">${p.foto_path?'✅ Foto cadastrada':'⚠️ Sem foto'}</span>
+      <span class="acoes" onclick="event.stopPropagation()">
+        <button title="Editar" onclick="abrirEdicao('${p.id}')">✏️</button>
+        <button title="Excluir" onclick="excluirPessoa('${p.id}')">🗑️</button>
+      </span>
       <span class="cam">📷</span></div>`).join('')
     + (lista.length>200?`<p style="text-align:center;color:#666">Mostrando 200 de ${lista.length}. Use a busca para filtrar.</p>`:'');
   carregarMiniaturas(vis);
@@ -317,6 +339,49 @@ async function apagarFoto() {
   fecharCam();
   renderTabela();
   toast('🗑️ Foto de ' + nome + ' apagada');
+}
+
+// ===== Editar / excluir pessoa =====
+let editando = null;
+function abrirEdicao(id) {
+  editando = pessoas.find(p => p.id === id);
+  $('eMat').value = editando.matricula; $('eNome').value = editando.nome; $('eLocal').value = editando.local_trabalho || '';
+  $('eMsg').textContent = '';
+  $('edModal').style.display = 'flex';
+}
+async function salvarEdicao() {
+  const matricula = $('eMat').value.trim(), nome = $('eNome').value.trim(), local_trabalho = $('eLocal').value.trim();
+  if (!matricula || !nome) { $('eMsg').textContent = 'Matrícula e nome são obrigatórios.'; return; }
+  const upd = { matricula, nome, local_trabalho };
+  if (matricula !== editando.matricula) {
+    if (pessoas.some(p => p.matricula === matricula)) { $('eMsg').textContent = 'Já existe outra pessoa com essa matrícula.'; return; }
+    if (editando.foto_path) {   // a foto é guardada como MATRICULA.jpg: renomeia junto
+      const novo = matricula + '.jpg';
+      const mv = await sb.storage.from('fotos').move(editando.foto_path, novo);
+      if (mv.error) { $('eMsg').textContent = 'Erro ao renomear a foto: ' + mv.error.message; return; }
+      upd.foto_path = novo;
+    }
+  }
+  const { error } = await sb.from('pessoas').update(upd).eq('id', editando.id);
+  if (error) { $('eMsg').textContent = 'Erro: ' + error.message; return; }
+  Object.assign(editando, upd);
+  $('edModal').style.display = 'none';
+  toast('✏️ Dados de ' + nome + ' atualizados');
+  listar();
+}
+async function excluirPessoa(id) {
+  const p = pessoas.find(x => x.id === id);
+  if (!p) return;
+  if (!confirm('Excluir ' + p.nome + ' (mat. ' + p.matricula + ')' + (p.foto_path ? ' e a foto cadastrada' : '') + '?\nEssa ação não pode ser desfeita.')) return;
+  if (p.foto_path) {
+    const rm = await sb.storage.from('fotos').remove([p.foto_path]);
+    if (rm.error) return alert('Erro ao apagar a foto: ' + rm.error.message);
+  }
+  const { error } = await sb.from('pessoas').delete().eq('id', id);
+  if (error) return alert('Erro: ' + error.message);
+  $('edModal').style.display = 'none';
+  toast('🗑️ ' + p.nome + ' excluído(a)');
+  listar();
 }
 
 async function verFoto(path) {
