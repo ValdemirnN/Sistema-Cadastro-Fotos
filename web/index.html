@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadastro de Fotos</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="config.js"></script>
+<style>
+  body{font-family:system-ui,Arial,sans-serif;margin:0;background:#f4f6f8;color:#222}
+  header{background:#1f3a5f;color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center}
+  main{padding:20px;max-width:1100px;margin:auto}
+  .card{background:#fff;border-radius:10px;padding:16px;margin-bottom:16px;box-shadow:0 1px 4px #0002}
+  button{background:#1f3a5f;color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;margin:2px}
+  button.sec{background:#6b7c93}
+  input,select{padding:8px;border:1px solid #bbb;border-radius:6px;margin:2px}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{border-bottom:1px solid #e3e3e3;padding:6px 8px;text-align:left}
+  th{background:#eef2f6}
+  .ok{color:#1a9a3a;font-weight:bold}
+  #login{max-width:340px;margin:80px auto}
+  #login input{display:block;width:100%;box-sizing:border-box;margin-bottom:10px}
+  .wrap{max-height:60vh;overflow:auto}
+  #modal{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center}
+  #modal img{max-width:90vw;max-height:80vh;border-radius:8px;background:#fff}
+</style>
+</head>
+<body>
+
+<div id="login" class="card">
+  <h2>Cadastro de Fotos</h2>
+  <input id="email" placeholder="E-mail" type="email">
+  <input id="senha" placeholder="Senha" type="password">
+  <button onclick="entrar()">Entrar</button>
+  <p id="loginMsg" style="color:#c00"></p>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <strong>Cadastro de Fotos</strong>
+    <button class="sec" onclick="sair()">Sair</button>
+  </header>
+  <main>
+    <div class="card">
+      <h3>1. Importar Excel</h3>
+      <p>Colunas: <b>MATRICULA</b>, <b>NOME</b>, <b>LOCAL</b> (veja o modelo_importacao.xlsx). Matrículas já existentes são atualizadas.</p>
+      <input type="file" id="xls" accept=".xlsx,.xls,.csv">
+      <button onclick="importar()">Importar</button>
+    </div>
+
+    <div class="card">
+      <h3>2. Exportar</h3>
+      <select id="filtroLocalExp"><option value="">Todos os locais</option></select>
+      <button onclick="baixarZip()">Baixar fotos (ZIP)</button>
+      <button class="sec" onclick="baixarExcel()">Baixar planilha (Excel)</button>
+      <p id="status"></p>
+    </div>
+
+    <div class="card">
+      <h3>3. Pessoas <span id="contagem"></span></h3>
+      <input id="busca" placeholder="Buscar nome ou matrícula" oninput="renderTabela()">
+      <select id="filtroFoto" onchange="renderTabela()">
+        <option value="">Todos</option>
+        <option value="sem">Sem foto</option>
+        <option value="com">Com foto</option>
+      </select>
+      <div class="wrap"><table id="tb"></table></div>
+    </div>
+  </main>
+</div>
+
+<div id="modal" onclick="this.style.display='none'"><img id="modalImg"></div>
+
+<script>
+const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let pessoas = [];
+
+(async () => {
+  const { data } = await sb.auth.getSession();
+  if (data.session) iniciar();
+})();
+
+async function entrar() {
+  const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('senha').value });
+  if (error) { $('loginMsg').textContent = error.message; return; }
+  iniciar();
+}
+async function sair() { await sb.auth.signOut(); location.reload(); }
+
+function iniciar() {
+  $('login').style.display = 'none';
+  $('app').style.display = 'block';
+  listar();
+}
+
+async function listar() {
+  let todos = [], from = 0;
+  while (true) {            // paginação: o Supabase devolve no máx. 1000 por vez
+    const { data, error } = await sb.from('pessoas').select().order('nome').range(from, from + 999);
+    if (error) { alert(error.message); return; }
+    todos = todos.concat(data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+  pessoas = todos;
+  const locais = [...new Set(pessoas.map(p => p.local_trabalho).filter(Boolean))].sort();
+  $('filtroLocalExp').innerHTML = '<option value="">Todos os locais</option>' +
+    locais.map(l => `<option>${esc(l)}</option>`).join('');
+  renderTabela();
+}
+
+function renderTabela() {
+  const b = $('busca').value.toLowerCase(), f = $('filtroFoto').value;
+  const lista = pessoas.filter(p =>
+    (!b || p.nome.toLowerCase().includes(b) || p.matricula.toLowerCase().includes(b)) &&
+    (!f || (f === 'com' ? p.foto_path : !p.foto_path)));
+  const comFoto = pessoas.filter(p => p.foto_path).length;
+  $('contagem').textContent = `(${lista.length} exibidas · ${comFoto}/${pessoas.length} com foto)`;
+  $('tb').innerHTML = '<tr><th>Matrícula</th><th>Nome</th><th>Local</th><th>Foto</th></tr>' +
+    lista.slice(0, 1000).map(p => `<tr>
+      <td>${esc(p.matricula)}</td><td>${esc(p.nome)}</td><td>${esc(p.local_trabalho)}</td>
+      <td>${p.foto_path ? `<a class="ok" href="#" onclick="verFoto('${esc(p.foto_path)}');return false">ver</a>` : ''}</td></tr>`).join('');
+}
+
+async function verFoto(path) {
+  const { data, error } = await sb.storage.from('fotos').download(path);
+  if (error) return alert(error.message);
+  $('modalImg').src = URL.createObjectURL(data);
+  $('modal').style.display = 'flex';
+}
+
+async function importar() {
+  const f = $('xls').files[0];
+  if (!f) return alert('Escolha um arquivo.');
+  const wb = XLSX.read(await f.arrayBuffer());
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+  const norm = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+  const dados = rows.map(r => {
+    const o = {}; for (const k in r) o[norm(k)] = r[k];
+    return {
+      matricula: String(o['MATRICULA'] ?? '').trim(),
+      nome: String(o['NOME'] ?? '').trim(),
+      local_trabalho: String(o['LOCAL'] ?? o['LOCAL DE TRABALHO'] ?? o['LOCAL_TRABALHO'] ?? '').trim()
+    };
+  }).filter(r => r.nome && r.matricula);
+
+  // remove matrículas duplicadas dentro do próprio arquivo
+  const unico = [...new Map(dados.map(d => [d.matricula, d])).values()];
+  for (let i = 0; i < unico.length; i += 500) {
+    const { error } = await sb.from('pessoas').upsert(unico.slice(i, i + 500), { onConflict: 'matricula' });
+    if (error) { $('status').textContent = 'Erro: ' + error.message; return; }
+  }
+  $('status').textContent = `${unico.length} pessoas importadas.`;
+  listar();
+}
+
+async function baixarZip() {
+  const loc = $('filtroLocalExp').value;
+  const lista = pessoas.filter(p => p.foto_path && (!loc || p.local_trabalho === loc));
+  if (!lista.length) return alert('Nenhuma foto para baixar.');
+  const zip = new JSZip(); let n = 0;
+  for (const p of lista) {
+    const { data, error } = await sb.storage.from('fotos').download(p.foto_path);
+    if (!error) zip.file(p.matricula + '.jpg', data);
+    $('status').textContent = `Baixando ${++n}/${lista.length}...`;
+  }
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = loc ? `fotos_${loc}.zip` : 'fotos.zip';
+  a.click();
+  $('status').textContent = `ZIP gerado com ${n} fotos.`;
+}
+
+function baixarExcel() {
+  const loc = $('filtroLocalExp').value;
+  const lista = pessoas.filter(p => !loc || p.local_trabalho === loc);
+  const ws = XLSX.utils.json_to_sheet(lista.map(p => ({
+    MATRICULA: p.matricula, NOME: p.nome, LOCAL: p.local_trabalho,
+    FOTO: p.foto_path ? 'SIM' : 'NÃO', ARQUIVO: p.foto_path ? p.matricula + '.jpg' : '' })));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Pessoas');
+  XLSX.writeFile(wb, 'pessoas.xlsx');
+}
+</script>
+</body>
+</html>
