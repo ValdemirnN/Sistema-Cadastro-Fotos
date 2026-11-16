@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadastro de Fotos</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="config.js"></script>
+<style>
+  body{font-family:system-ui,Arial,sans-serif;margin:0;background:#f4f6f8;color:#222}
+  header{background:#1f3a5f;color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center}
+  main{padding:20px;max-width:1100px;margin:auto}
+  .card{background:#fff;border-radius:10px;padding:16px;margin-bottom:16px;box-shadow:0 1px 4px #0002}
+  button{background:#1f3a5f;color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;margin:2px}
+  button.sec{background:#6b7c93}
+  input,select{padding:8px;border:1px solid #bbb;border-radius:6px;margin:2px}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th,td{border-bottom:1px solid #e3e3e3;padding:6px 8px;text-align:left}
+  th{background:#eef2f6}
+  .ok{color:#1a9a3a;font-weight:bold}
+  #login{max-width:340px;margin:80px auto}
+  #login input{display:block;width:100%;box-sizing:border-box;margin-bottom:10px}
+  .wrap{max-height:60vh;overflow:auto}
+  #modal{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center}
+  #modal img{max-width:90vw;max-height:80vh;border-radius:8px;background:#fff}
+  .lista{display:flex;flex-direction:column}
+  .pessoa{display:flex;align-items:center;gap:12px;padding:10px 6px;border-bottom:1px solid #e3e3e3;cursor:pointer}
+  .pessoa:hover{background:#f0f5fb}
+  .av{width:48px;height:48px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:17px;background-size:cover;background-position:center;position:relative}
+  .av.tem{box-shadow:0 0 0 3px #1a9a3a}
+  .info{flex:1;min-width:0}
+  .info b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .info small{color:#666}
+  .cam{font-size:20px}
+  #camModal{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:10}
+  #camBox{background:#fff;border-radius:12px;padding:16px;width:min(94vw,520px);text-align:center}
+  #camBox video,#camBox img{width:100%;max-height:60vh;border-radius:8px;background:#000;object-fit:contain}
+  #camMsg{color:#c00;min-height:1.2em;font-size:14px}
+  #camVideo.espelho{transform:scaleX(-1)}
+  .badge{font-size:12px;padding:3px 8px;border-radius:12px;white-space:nowrap;font-weight:bold}
+  .badge.ok{background:#e3f6e8;color:#1a7a32}
+  .badge.no{background:#fff1dc;color:#a15c00}
+  #camStatus{font-weight:bold;margin:4px 0}
+  #camStatus.ok{color:#1a7a32} #camStatus.no{color:#a15c00}
+  button.del{background:#c62828}
+  #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:10px 18px;border-radius:8px;display:none;z-index:20}
+  .acoes button{background:none;color:#222;padding:4px 6px;font-size:18px;margin:0}
+  .acoes button:hover{background:#e3e8ef}
+  #edModal{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:10}
+  #edBox{background:#fff;border-radius:12px;padding:18px;width:min(94vw,420px)}
+  #edBox input{display:block;width:100%;box-sizing:border-box;margin:4px 0 10px}
+  #edBox label{font-size:13px;color:#555}
+  .vf{position:relative;aspect-ratio:210/242;width:min(100%,320px);margin:0 auto;overflow:hidden;border-radius:8px;background:#000}
+  #camBox .vf video,#camBox .vf img{position:absolute;inset:0;width:100%;height:100%;max-height:none;object-fit:cover;border-radius:0}
+  #camBox .vf img{object-fit:contain}
+  #guia{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+</style>
+</head>
+<body>
+
+<div id="login" class="card">
+  <h2>Cadastro de Fotos</h2>
+  <input id="email" placeholder="E-mail" type="email">
+  <input id="senha" placeholder="Senha" type="password">
+  <button onclick="entrar()">Entrar</button>
+  <p id="loginMsg" style="color:#c00"></p>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <strong>Cadastro de Fotos</strong>
+    <button class="sec" onclick="sair()">Sair</button>
+  </header>
+  <main>
+    <div class="card">
+      <h3>Adicionar pessoa manualmente</h3>
+      <input id="mMat" placeholder="Matrícula" style="width:130px">
+      <input id="mNome" placeholder="Nome completo" style="width:260px">
+      <input id="mLocal" placeholder="Local de trabalho" list="listaLocais" style="width:220px">
+      <datalist id="listaLocais"></datalist>
+      <button onclick="adicionarManual()">Adicionar</button>
+      <p id="mMsg"></p>
+    </div>
+
+    <div class="card">
+      <h3>1. Importar Excel</h3>
+      <p>Colunas: <b>MATRICULA</b>, <b>NOME</b>, <b>LOCAL</b> (veja o modelo_importacao.xlsx). Matrículas já existentes são atualizadas.</p>
+      <input type="file" id="xls" accept=".xlsx,.xls,.csv">
+      <button onclick="importar()">Importar</button>
+    </div>
+
+    <div class="card">
+      <h3>2. Exportar</h3>
+      <select id="filtroLocalExp"><option value="">Todos os locais</option></select>
+      <button onclick="baixarZip()">Baixar fotos (ZIP)</button>
+      <button class="sec" onclick="baixarExcel()">Baixar planilha (Excel)</button>
+      <p id="status"></p>
+    </div>
+
+    <div class="card">
+      <h3>3. Pessoas <span id="contagem"></span></h3>
+      <input id="busca" placeholder="Buscar nome ou matrícula" oninput="renderTabela()">
+      <select id="filtroFoto" onchange="renderTabela()">
+        <option value="">Todos</option>
+        <option value="sem">Sem foto</option>
+        <option value="com">Com foto</option>
+      </select>
+      <div class="wrap"><div id="tb" class="lista"></div></div>
+    </div>
+  </main>
+</div>
+
+<div id="camModal">
+  <div id="camBox">
+    <h3 id="camNome" style="margin:0 0 4px"></h3>
+    <small id="camSub" style="color:#666"></small>
+    <div id="camStatus"></div>
+    <div class="vf" style="margin-top:10px;margin-bottom:10px">
+      <video id="camVideo" class="espelho" autoplay playsinline muted></video>
+      <img id="camPrev" style="display:none">
+      <svg id="guia" viewBox="0 0 210 242" preserveAspectRatio="none">
+        <ellipse cx="105" cy="100" rx="60" ry="78" fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="2" stroke-dasharray="6 5"/>
+        <path d="M8 242 Q28 192 105 186 Q182 192 202 242" fill="none" stroke="#fff" stroke-opacity=".9" stroke-width="2" stroke-dasharray="6 5"/>
+      </svg>
+    </div>
+    <p id="camMsg"></p>
+    <div id="btnsLive">
+      <div style="font-size:13px;color:#555;margin-bottom:6px">Posicione o rosto dentro do contorno e os ombros na curva de baixo.</div>
+      <label style="font-size:14px;display:block;margin-bottom:6px"><input type="checkbox" id="espelhar" checked onchange="aplicarEspelho()"> Espelhar foto</label>
+      <button onclick="capturar()">📷 Tirar foto</button>
+      <button class="sec" onclick="trocarCamera()">🔄 Virar câmera</button>
+      <button class="sec" onclick="$('arqFoto').click()">🖼️ Arquivo</button>
+    </div>
+    <div id="btnsPrev" style="display:none">
+      <button onclick="salvarFoto()">✅ Salvar</button>
+      <button class="sec" onclick="refazer()">↩️ Descartar e refazer</button>
+    </div>
+    <div id="btnsView" style="display:none">
+      <button onclick="refazer()">📷 Tirar nova foto</button>
+      <button class="del" onclick="apagarFoto()">🗑️ Apagar foto</button>
+    </div>
+    <div><button class="sec" onclick="fecharCam()">Fechar</button></div>
+    <input type="file" id="arqFoto" accept="image/*" capture="environment" style="display:none" onchange="arquivoEscolhido(this)">
+  </div>
+</div>
+<div id="edModal">
+  <div id="edBox">
+    <h3 style="margin-top:0">Editar pessoa</h3>
+    <label>Matrícula</label><input id="eMat">
+    <label>Nome</label><input id="eNome">
+    <label>Local de trabalho</label><input id="eLocal" list="listaLocais">
+    <p id="eMsg" style="color:#c00;min-height:1.2em;font-size:14px"></p>
+    <button onclick="salvarEdicao()">Salvar</button>
+    <button class="sec" onclick="$('edModal').style.display='none'">Cancelar</button>
+    <button class="del" style="float:right" onclick="excluirPessoa(editando.id)">🗑️ Excluir pessoa</button>
+  </div>
+</div>
+<div id="toast"></div>
+
+<div id="modal" onclick="this.style.display='none'"><img id="modalImg"></div>
+
+<script>
+const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let pessoas = [];
+
+(async () => {
+  const { data } = await sb.auth.getSession();
+  if (data.session) iniciar();
+})();
+
+async function entrar() {
+  const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('senha').value });
+  if (error) { $('loginMsg').textContent = error.message; return; }
+  iniciar();
+}
+async function sair() { await sb.auth.signOut(); location.reload(); }
+
+function iniciar() {
+  $('login').style.display = 'none';
+  $('app').style.display = 'block';
+  listar();
+}
+
+async function listar() {
+  let todos = [], from = 0;
+  while (true) {            // paginação: o Supabase devolve no máx. 1000 por vez
+    const { data, error } = await sb.from('pessoas').select().order('nome').range(from, from + 999);
+    if (error) { alert(error.message); return; }
+    todos = todos.concat(data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+  pessoas = todos;
+  const locais = [...new Set(pessoas.map(p => p.local_trabalho).filter(Boolean))].sort();
+  $('filtroLocalExp').innerHTML = '<option value="">Todos os locais</option>' +
+    locais.map(l => `<option>${esc(l)}</option>`).join('');
+  $('listaLocais').innerHTML = locais.map(l => `<option value="${esc(l)}">`).join('');
+  renderTabela();
+}
+
+const cores=['#1f3a5f','#2e7d32','#8e24aa','#d84315','#00838f','#6d4c41','#c2185b','#455a64'];
+const iniciais=n=>{const p=String(n).trim().split(/\s+/).filter(Boolean);return ((p[0]||'?')[0]+(p.length>1?p[p.length-1][0]:'')).toUpperCase()};
+const corDe=n=>{let h=0;for(const c of String(n))h=(h*31+c.charCodeAt(0))>>>0;return cores[h%cores.length]};
+const urlCache={};
+
+function renderTabela() {
+  const b = $('busca').value.toLowerCase(), f = $('filtroFoto').value;
+  const lista = pessoas.filter(p =>
+    (!b || p.nome.toLowerCase().includes(b) || p.matricula.toLowerCase().includes(b)) &&
+    (!f || (f === 'com' ? p.foto_path : !p.foto_path)));
+  const comFoto = pessoas.filter(p => p.foto_path).length;
+  $('contagem').textContent = `(${lista.length} exibidas · ${comFoto}/${pessoas.length} com foto)`;
+  const vis = lista.slice(0, 200);
+  $('tb').innerHTML = vis.map(p => `<div class="pessoa" onclick="abrirCam('${p.id}')">
+      <div class="av ${p.foto_path?'tem':''}" data-id="${p.id}" style="background-color:${corDe(p.nome)}">${p.foto_path?'':esc(iniciais(p.nome))}</div>
+      <div class="info"><b>${esc(p.nome)}</b><small>Mat. ${esc(p.matricula)}${p.local_trabalho?' · '+esc(p.local_trabalho):''}</small></div>
+      <span class="badge ${p.foto_path?'ok':'no'}">${p.foto_path?'✅ Foto cadastrada':'⚠️ Sem foto'}</span>
+      <span class="acoes" onclick="event.stopPropagation()">
+        <button title="Editar" onclick="abrirEdicao('${p.id}')">✏️</button>
+        <button title="Excluir" onclick="excluirPessoa('${p.id}')">🗑️</button>
+      </span>
+      <span class="cam">📷</span></div>`).join('')
+    + (lista.length>200?`<p style="text-align:center;color:#666">Mostrando 200 de ${lista.length}. Use a busca para filtrar.</p>`:'');
+  carregarMiniaturas(vis);
+}
+
+async function carregarMiniaturas(vis) {
+  const com = vis.filter(p => p.foto_path);
+  const falta = com.filter(p => !urlCache[p.foto_path + '|' + p.foto_em]);
+  if (falta.length) {
+    const { data } = await sb.storage.from('fotos').createSignedUrls(falta.map(p => p.foto_path), 3600);
+    (data || []).forEach((d, i) => { if (d.signedUrl) urlCache[falta[i].foto_path + '|' + falta[i].foto_em] = d.signedUrl + '&t=' + (falta[i].foto_em || ''); });
+  }
+  com.forEach(p => {
+    const u = urlCache[p.foto_path + '|' + p.foto_em];
+    const el = document.querySelector(`.av[data-id="${p.id}"]`);
+    if (u && el) el.style.backgroundImage = `url("${u}")`;
+  });
+}
+
+// ===== Câmera =====
+let pessoaAtual = null, stream = null, facing = 'user', blobFoto = null;
+
+function toast(t) { const e = $('toast'); e.textContent = t; e.style.display = 'block'; setTimeout(() => e.style.display = 'none', 2800); }
+function fmtData(iso) { return iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''; }
+function setStatus(t, ok) { const e = $('camStatus'); e.textContent = t; e.className = ok ? 'ok' : 'no'; }
+function modo(m) { // 'live' | 'prev' | 'view'
+  $('camVideo').style.display = m === 'live' ? 'block' : 'none';
+  $('camPrev').style.display = m === 'live' ? 'none' : 'block';
+  $('btnsLive').style.display = m === 'live' ? 'block' : 'none';
+  $('btnsPrev').style.display = m === 'prev' ? 'block' : 'none';
+  $('btnsView').style.display = m === 'view' ? 'block' : 'none';
+  $('guia').style.display = m === 'live' ? 'block' : 'none';
+}
+function aplicarEspelho() { $('camVideo').classList.toggle('espelho', $('espelhar').checked); }
+
+async function abrirCam(id) {
+  pessoaAtual = pessoas.find(p => p.id === id);
+  $('camNome').textContent = pessoaAtual.nome;
+  $('camSub').textContent = 'Mat. ' + pessoaAtual.matricula + (pessoaAtual.local_trabalho ? ' · ' + pessoaAtual.local_trabalho : '');
+  $('camMsg').textContent = '';
+  $('camModal').style.display = 'flex';
+  if (pessoaAtual.foto_path) {
+    setStatus('✅ Foto cadastrada' + (pessoaAtual.foto_em ? ' em ' + fmtData(pessoaAtual.foto_em) : ''), true);
+    pararStream(); modo('view');
+    $('camPrev').removeAttribute('src');
+    const { data, error } = await sb.storage.from('fotos').download(pessoaAtual.foto_path);
+    if (error) $('camMsg').textContent = 'Não foi possível carregar a foto: ' + error.message;
+    else $('camPrev').src = URL.createObjectURL(data);
+  } else {
+    refazer();
+  }
+}
+async function iniciarStream() {
+  pararStream();
+  if (!navigator.mediaDevices?.getUserMedia) { $('camMsg').textContent = 'Câmera indisponível neste navegador. Use o botão Arquivo.'; return; }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1280 } }, audio: false });
+    $('camVideo').srcObject = stream;
+  } catch (e) { $('camMsg').textContent = 'Não foi possível abrir a câmera (' + e.name + '). Permita o acesso ou use o botão Arquivo.'; }
+}
+function pararStream() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
+function trocarCamera() { facing = facing === 'environment' ? 'user' : 'environment'; iniciarStream(); }
+function fecharCam() { pararStream(); $('camModal').style.display = 'none'; pessoaAtual = null; }
+
+function mostrarPrev(blob) {
+  blobFoto = blob;
+  pararStream();
+  $('camPrev').src = URL.createObjectURL(blob);
+  setStatus('🆕 Foto tirada, ainda NÃO salva. Clique em Salvar para cadastrar.', false);
+  modo('prev');
+}
+function refazer() {
+  blobFoto = null; $('camMsg').textContent = '';
+  setStatus(pessoaAtual && pessoaAtual.foto_path ? '🔄 Tirando nova foto (vai substituir a atual)' : '⚠️ Sem foto cadastrada', false);
+  aplicarEspelho();
+  modo('live');
+  iniciarStream();
+}
+// Tamanho final da foto (igual ao padrão do crachá). Para mais resolução, dobre: 420 x 484.
+const FOTO_W = 210, FOTO_H = 242;
+function reduzir(fonte, w, h, espelhar, cb, topo) {
+  const razao = FOTO_W / FOTO_H;
+  let sw = w, sh = h;                                   // recorte centralizado na proporção da foto
+  if (w / h > razao) sw = h * razao; else sh = w / razao;
+  const sx = (w - sw) / 2;
+  const sy = (h - sh) * (topo ? 0.2 : 0.5);              // arquivos: foca mais na parte de cima (rosto)
+  const c = document.createElement('canvas'); c.width = FOTO_W; c.height = FOTO_H;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  if (espelhar) { ctx.translate(FOTO_W, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(fonte, sx, sy, sw, sh, 0, 0, FOTO_W, FOTO_H);
+  c.toBlob(cb, 'image/jpeg', 0.92);
+}
+function capturar() {
+  const v = $('camVideo');
+  if (!v.videoWidth) { $('camMsg').textContent = 'Câmera ainda não está pronta.'; return; }
+  reduzir(v, v.videoWidth, v.videoHeight, $('espelhar').checked, mostrarPrev);
+}
+function arquivoEscolhido(inp) {
+  const f = inp.files[0]; inp.value = '';
+  if (!f) return;
+  const img = new Image();
+  img.onload = () => reduzir(img, img.naturalWidth, img.naturalHeight, false, mostrarPrev, true); // arquivo: sem espelhar
+  img.src = URL.createObjectURL(f);
+}
+async function salvarFoto() {
+  if (!blobFoto || !pessoaAtual) return;
+  $('camMsg').textContent = 'Enviando...';
+  const path = pessoaAtual.matricula + '.jpg';
+  const up = await sb.storage.from('fotos').upload(path, blobFoto, { contentType: 'image/jpeg', upsert: true });
+  if (up.error) { $('camMsg').textContent = 'Erro: ' + up.error.message; return; }
+  const agora = new Date().toISOString();
+  const { error } = await sb.from('pessoas').update({ foto_path: path, foto_em: agora }).eq('id', pessoaAtual.id);
+  if (error) { $('camMsg').textContent = 'Erro: ' + error.message; return; }
+  const nome = pessoaAtual.nome;
+  pessoaAtual.foto_path = path; pessoaAtual.foto_em = agora;
+  fecharCam();
+  renderTabela();
+  toast('✅ Foto de ' + nome + ' cadastrada com sucesso');
+}
+async function apagarFoto() {
+  if (!pessoaAtual || !pessoaAtual.foto_path) return;
+  if (!confirm('Apagar a foto de ' + pessoaAtual.nome + '? Essa ação não pode ser desfeita.')) return;
+  $('camMsg').textContent = 'Apagando...';
+  const rm = await sb.storage.from('fotos').remove([pessoaAtual.foto_path]);
+  if (rm.error) { $('camMsg').textContent = 'Erro: ' + rm.error.message; return; }
+  const { error } = await sb.from('pessoas').update({ foto_path: null, foto_em: null }).eq('id', pessoaAtual.id);
+  if (error) { $('camMsg').textContent = 'Erro: ' + error.message; return; }
+  const nome = pessoaAtual.nome;
+  pessoaAtual.foto_path = null; pessoaAtual.foto_em = null;
+  fecharCam();
+  renderTabela();
+  toast('🗑️ Foto de ' + nome + ' apagada');
+}
+
+// ===== Editar / excluir pessoa =====
+let editando = null;
+function abrirEdicao(id) {
+  editando = pessoas.find(p => p.id === id);
+  $('eMat').value = editando.matricula; $('eNome').value = editando.nome; $('eLocal').value = editando.local_trabalho || '';
+  $('eMsg').textContent = '';
+  $('edModal').style.display = 'flex';
+}
+async function salvarEdicao() {
+  const matricula = $('eMat').value.trim(), nome = $('eNome').value.trim(), local_trabalho = $('eLocal').value.trim();
+  if (!matricula || !nome) { $('eMsg').textContent = 'Matrícula e nome são obrigatórios.'; return; }
+  const upd = { matricula, nome, local_trabalho };
+  if (matricula !== editando.matricula) {
+    if (pessoas.some(p => p.matricula === matricula)) { $('eMsg').textContent = 'Já existe outra pessoa com essa matrícula.'; return; }
+    if (editando.foto_path) {   // a foto é guardada como MATRICULA.jpg: renomeia junto
+      const novo = matricula + '.jpg';
+      const mv = await sb.storage.from('fotos').move(editando.foto_path, novo);
+      if (mv.error) { $('eMsg').textContent = 'Erro ao renomear a foto: ' + mv.error.message; return; }
+      upd.foto_path = novo;
+    }
+  }
+  const { error } = await sb.from('pessoas').update(upd).eq('id', editando.id);
+  if (error) { $('eMsg').textContent = 'Erro: ' + error.message; return; }
+  Object.assign(editando, upd);
+  $('edModal').style.display = 'none';
+  toast('✏️ Dados de ' + nome + ' atualizados');
+  listar();
+}
+async function excluirPessoa(id) {
+  const p = pessoas.find(x => x.id === id);
+  if (!p) return;
+  if (!confirm('Excluir ' + p.nome + ' (mat. ' + p.matricula + ')' + (p.foto_path ? ' e a foto cadastrada' : '') + '?\nEssa ação não pode ser desfeita.')) return;
+  if (p.foto_path) {
+    const rm = await sb.storage.from('fotos').remove([p.foto_path]);
+    if (rm.error) return alert('Erro ao apagar a foto: ' + rm.error.message);
+  }
+  const { error } = await sb.from('pessoas').delete().eq('id', id);
+  if (error) return alert('Erro: ' + error.message);
+  $('edModal').style.display = 'none';
+  toast('🗑️ ' + p.nome + ' excluído(a)');
+  listar();
+}
+
+async function verFoto(path) {
+  const { data, error } = await sb.storage.from('fotos').download(path);
+  if (error) return alert(error.message);
+  $('modalImg').src = URL.createObjectURL(data);
+  $('modal').style.display = 'flex';
+}
+
+async function adicionarManual() {
+  const matricula = $('mMat').value.trim(), nome = $('mNome').value.trim(), local_trabalho = $('mLocal').value.trim();
+  const msg = t => { $('mMsg').textContent = t; };
+  if (!matricula || !nome) return msg('Preencha matrícula e nome.');
+  const existe = pessoas.find(p => p.matricula === matricula);
+  if (existe && !confirm(`A matrícula ${matricula} já existe (${existe.nome}). Atualizar os dados?`)) return;
+  const { error } = await sb.from('pessoas').upsert({ matricula, nome, local_trabalho }, { onConflict: 'matricula' });
+  if (error) return msg('Erro: ' + error.message);
+  msg(`${nome} ${existe ? 'atualizado(a)' : 'adicionado(a)'}.`);
+  $('mMat').value = ''; $('mNome').value = '';
+  $('mMat').focus();
+  listar();
+}
+
+async function importar() {
+  const f = $('xls').files[0];
+  if (!f) return alert('Escolha um arquivo.');
+  const wb = XLSX.read(await f.arrayBuffer());
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+  const norm = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+  const dados = rows.map(r => {
+    const o = {}; for (const k in r) o[norm(k)] = r[k];
+    return {
+      matricula: String(o['MATRICULA'] ?? '').trim(),
+      nome: String(o['NOME'] ?? '').trim(),
+      local_trabalho: String(o['LOCAL'] ?? o['LOCAL DE TRABALHO'] ?? o['LOCAL_TRABALHO'] ?? '').trim()
+    };
+  }).filter(r => r.nome && r.matricula);
+
+  // remove matrículas duplicadas dentro do próprio arquivo
+  const unico = [...new Map(dados.map(d => [d.matricula, d])).values()];
+  for (let i = 0; i < unico.length; i += 500) {
+    const { error } = await sb.from('pessoas').upsert(unico.slice(i, i + 500), { onConflict: 'matricula' });
+    if (error) { $('status').textContent = 'Erro: ' + error.message; return; }
+  }
+  $('status').textContent = `${unico.length} pessoas importadas.`;
+  listar();
+}
+
+// Nome do arquivo no PC: NOME.jpg (se houver nomes repetidos, acrescenta a matrícula)
+function nomesArquivo(lista) {
+  const limpo = n => String(n).replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim() || 'SEM NOME';
+  const cont = {};
+  lista.forEach(p => { const k = limpo(p.nome).toLowerCase(); cont[k] = (cont[k] || 0) + 1; });
+  const mapa = {};
+  lista.forEach(p => {
+    const base = limpo(p.nome);
+    mapa[p.id] = (cont[base.toLowerCase()] > 1 ? `${base} - ${limpo(p.matricula)}` : base) + '.jpg';
+  });
+  return mapa;
+}
+
+async function baixarZip() {
+  const loc = $('filtroLocalExp').value;
+  const lista = pessoas.filter(p => p.foto_path && (!loc || p.local_trabalho === loc));
+  if (!lista.length) return alert('Nenhuma foto para baixar.');
+  const zip = new JSZip(); let n = 0;
+  const nomes = nomesArquivo(lista);
+  for (const p of lista) {
+    const { data, error } = await sb.storage.from('fotos').download(p.foto_path);
+    if (!error) zip.file(nomes[p.id], data);
+    $('status').textContent = `Baixando ${++n}/${lista.length}...`;
+  }
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = loc ? `fotos_${loc}.zip` : 'fotos.zip';
+  a.click();
+  $('status').textContent = `ZIP gerado com ${n} fotos.`;
+}
+
+function baixarExcel() {
+  const loc = $('filtroLocalExp').value;
+  const lista = pessoas.filter(p => !loc || p.local_trabalho === loc);
+  const nomes = nomesArquivo(lista);
+  const ws = XLSX.utils.json_to_sheet(lista.map(p => ({
+    MATRICULA: p.matricula, NOME: p.nome, LOCAL: p.local_trabalho,
+    FOTO: p.foto_path ? 'SIM' : 'NÃO', ARQUIVO: p.foto_path ? nomes[p.id] : '' })));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Pessoas');
+  XLSX.writeFile(wb, 'pessoas.xlsx');
+}
+</script>
+</body>
+</html>
