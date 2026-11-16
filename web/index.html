@@ -57,6 +57,16 @@
   </header>
   <main>
     <div class="card">
+      <h3>Adicionar pessoa manualmente</h3>
+      <input id="mMat" placeholder="Matrícula" style="width:130px">
+      <input id="mNome" placeholder="Nome completo" style="width:260px">
+      <input id="mLocal" placeholder="Local de trabalho" list="listaLocais" style="width:220px">
+      <datalist id="listaLocais"></datalist>
+      <button onclick="adicionarManual()">Adicionar</button>
+      <p id="mMsg"></p>
+    </div>
+
+    <div class="card">
       <h3>1. Importar Excel</h3>
       <p>Colunas: <b>MATRICULA</b>, <b>NOME</b>, <b>LOCAL</b> (veja o modelo_importacao.xlsx). Matrículas já existentes são atualizadas.</p>
       <input type="file" id="xls" accept=".xlsx,.xls,.csv">
@@ -146,6 +156,7 @@ async function listar() {
   const locais = [...new Set(pessoas.map(p => p.local_trabalho).filter(Boolean))].sort();
   $('filtroLocalExp').innerHTML = '<option value="">Todos os locais</option>' +
     locais.map(l => `<option>${esc(l)}</option>`).join('');
+  $('listaLocais').innerHTML = locais.map(l => `<option value="${esc(l)}">`).join('');
   renderTabela();
 }
 
@@ -257,6 +268,20 @@ async function verFoto(path) {
   if (error) return alert(error.message);
   $('modalImg').src = URL.createObjectURL(data);
   $('modal').style.display = 'flex';
+}
+
+async function adicionarManual() {
+  const matricula = $('mMat').value.trim(), nome = $('mNome').value.trim(), local_trabalho = $('mLocal').value.trim();
+  const msg = t => { $('mMsg').textContent = t; };
+  if (!matricula || !nome) return msg('Preencha matrícula e nome.');
+  const existe = pessoas.find(p => p.matricula === matricula);
+  if (existe && !confirm(`A matrícula ${matricula} já existe (${existe.nome}). Atualizar os dados?`)) return;
+  const { error } = await sb.from('pessoas').upsert({ matricula, nome, local_trabalho }, { onConflict: 'matricula' });
+  if (error) return msg('Erro: ' + error.message);
+  msg(`${nome} ${existe ? 'atualizado(a)' : 'adicionado(a)'}.`);
+  $('mMat').value = ''; $('mNome').value = '';
+  $('mMat').focus();
+  listar();
 }
 
 async function importar() {
