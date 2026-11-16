@@ -284,14 +284,28 @@ async function importar() {
   listar();
 }
 
+// Nome do arquivo no PC: NOME.jpg (se houver nomes repetidos, acrescenta a matrícula)
+function nomesArquivo(lista) {
+  const limpo = n => String(n).replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim() || 'SEM NOME';
+  const cont = {};
+  lista.forEach(p => { const k = limpo(p.nome).toLowerCase(); cont[k] = (cont[k] || 0) + 1; });
+  const mapa = {};
+  lista.forEach(p => {
+    const base = limpo(p.nome);
+    mapa[p.id] = (cont[base.toLowerCase()] > 1 ? `${base} - ${limpo(p.matricula)}` : base) + '.jpg';
+  });
+  return mapa;
+}
+
 async function baixarZip() {
   const loc = $('filtroLocalExp').value;
   const lista = pessoas.filter(p => p.foto_path && (!loc || p.local_trabalho === loc));
   if (!lista.length) return alert('Nenhuma foto para baixar.');
   const zip = new JSZip(); let n = 0;
+  const nomes = nomesArquivo(lista);
   for (const p of lista) {
     const { data, error } = await sb.storage.from('fotos').download(p.foto_path);
-    if (!error) zip.file(p.matricula + '.jpg', data);
+    if (!error) zip.file(nomes[p.id], data);
     $('status').textContent = `Baixando ${++n}/${lista.length}...`;
   }
   const blob = await zip.generateAsync({ type: 'blob' });
@@ -305,9 +319,10 @@ async function baixarZip() {
 function baixarExcel() {
   const loc = $('filtroLocalExp').value;
   const lista = pessoas.filter(p => !loc || p.local_trabalho === loc);
+  const nomes = nomesArquivo(lista);
   const ws = XLSX.utils.json_to_sheet(lista.map(p => ({
     MATRICULA: p.matricula, NOME: p.nome, LOCAL: p.local_trabalho,
-    FOTO: p.foto_path ? 'SIM' : 'NÃO', ARQUIVO: p.foto_path ? p.matricula + '.jpg' : '' })));
+    FOTO: p.foto_path ? 'SIM' : 'NÃO', ARQUIVO: p.foto_path ? nomes[p.id] : '' })));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Pessoas');
   XLSX.writeFile(wb, 'pessoas.xlsx');
